@@ -24,6 +24,8 @@
 - 批量上传本地目录
 - 传输进度监听
 - 仅在交互式终端中显示彩色进度条
+- 使用 `--progress` 在非 TTY 环境强制显示上传和下载进度条
+- 创建夸克文件或目录分享链接，并可选设置提取码
 - Ctrl+C 取消传输
 - 基于 `${filename}.quark.task` 的 CLI 恢复机制
 - 基于 `目录名.quark.task` 的目录任务恢复机制
@@ -108,6 +110,15 @@ quarkpan download --fid <fid> --output ./file.bin -c
 quarkpan upload --file ./file.bin --pdir-fid 0
 quarkpan upload --file ./file.bin --pdir-fid 0 -c
 ```
+
+创建分享链接：
+
+```bash
+quarkpan share create --fid <fid>
+quarkpan share create --fid <fid> --title "我的文件" --password 1234
+```
+
+分享命令会输出分享 URL、分享 ID 和（如果设置）提取码。Cookie 不会由该功能写入输出；请通过安全的持久化 Cookie 配置或 `--cookie-file` 提供。
 
 目录下载并支持恢复：
 

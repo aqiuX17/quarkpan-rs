@@ -36,8 +36,8 @@ pub use crate::error::{QuarkPanError, Result};
 pub use crate::folder::CreateFolderBuilder;
 pub use crate::list::{ListBuilder, ListRequest};
 pub use crate::model::{
-    DownloadInfo, Fid, ListPage, QuarkEntry, UploadComplete, UploadPrepareResult, UploadResume,
-    UploadResumeState, UploadSession,
+    DownloadInfo, Fid, ListPage, QuarkEntry, ShareInfo, UploadComplete, UploadPrepareResult,
+    UploadResume, UploadResumeState, UploadSession,
 };
 pub use crate::rename::{RenameBuilder, RenameRequest};
 pub use crate::transfer::{ProgressStream, TransferControl, TransferProgress};
@@ -94,6 +94,20 @@ impl QuarkPan {
         S: AsRef<str>,
     {
         self.inner.api.delete(fids).await
+    }
+
+    /// Creates a share link for one or more files or folders.
+    pub async fn create_share(
+        &self,
+        fids: &[String],
+        title: impl AsRef<str>,
+        password: Option<&str>,
+        expired_type: u8,
+    ) -> Result<ShareInfo> {
+        self.inner
+            .api
+            .create_share(fids, title.as_ref(), password, expired_type)
+            .await
     }
 }
 

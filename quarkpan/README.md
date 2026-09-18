@@ -26,10 +26,13 @@
   上传文件
 - `upload-dir`
   上传整个目录
+- `share create`
+  为一个或多个文件或目录创建分享链接
 
 同时支持：
 
-- 仅在交互式 TTY 中显示进度条
+- 交互式 TTY 中显示上传和下载进度条
+- 使用 `--progress` 可在管道、SSH 命令或其他非 TTY 环境中强制显示进度条
 - `--color auto|always|never`
 - Ctrl+C 取消
 - 中断后保留 `.quark.task` 任务文件
@@ -180,6 +183,12 @@ quarkpan download-dir --pdir-fid <pdir_fid> --output ./backup -c -o
 quarkpan --cookie 'k1=v1; k2=v2' upload --file ./file.bin --pdir-fid 0
 ```
 
+强制在非 TTY 环境显示上传进度：
+
+```bash
+quarkpan --progress upload --file ./file.bin --pdir-fid 0
+```
+
 ### 恢复上传
 
 ```bash
@@ -198,6 +207,25 @@ quarkpan upload-dir --dir ./photos --pdir-fid 0
 quarkpan upload-dir --dir ./photos --pdir-fid 0 -c
 quarkpan upload-dir --dir ./photos --pdir-fid 0 -c -o
 ```
+
+### 创建分享链接
+
+默认创建永久公开链接：
+
+```bash
+quarkpan share create --fid <fid>
+```
+
+指定标题和提取码：
+
+```bash
+quarkpan share create \
+  --fid <fid> \
+  --title "我的文件" \
+  --password 1234
+```
+
+`--expired-type 1` 表示永久链接，`--expired-type 2` 表示限时链接。Cookie 只通过持久化配置、`--cookie-file` 或环境变量提供，不要写入命令历史、源码或提交记录。
 
 ## 任务文件说明
 

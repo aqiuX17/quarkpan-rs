@@ -11,10 +11,11 @@ use serde::Serialize;
 
 use crate::error::{QuarkPanError, Result};
 use crate::model::{
-    AuthRequest, AuthResponse, CreateFolderRequest, CreateFolderResponse, DeleteFilesRequest,
-    DeleteFilesResponse, DownloadInfo, EmptyData, FileDownloadUrlItem, FinishRequest,
-    FinishResponse, GetFilesDownloadUrlsRequest, GetFilesDownloadUrlsResponse, ListFolderResponse,
-    ListPage, RenameFileRequest, RenameFileResponse, Response, UpAuthAndCommitRequest,
+    AuthRequest, AuthResponse, CreateFolderRequest, CreateFolderResponse, CreateShareRequest,
+    CreateShareResponse, DeleteFilesRequest, DeleteFilesResponse, DownloadInfo, EmptyData,
+    FileDownloadUrlItem, FinishRequest, FinishResponse, GetFilesDownloadUrlsRequest,
+    GetFilesDownloadUrlsResponse, ListFolderResponse, ListPage, RenameFileRequest,
+    RenameFileResponse, Response, SharePasswordResponse, TaskResponse, UpAuthAndCommitRequest,
     UpHashRequest, UpHashResponse, UpPartMethodRequest, UpPreRequest, UpPreResponse,
 };
 
@@ -246,6 +247,89 @@ impl ApiClient {
             .await?;
         self.ensure_ok(res)?;
         Ok(())
+    }
+
+    pub async fn create_share(
+        &self,
+        fids: &[String],
+        title: &str,
+        password: Option<&str>,
+        expired_type: u8,
+    ) -> Result<crate::model::ShareInfo> {
+        if fids.is_empty() {
+            return Err(QuarkPanError::invalid_argument(
+                "at least one fid is required",
+            ));
+        }
+        let request = CreateShareRequest {
+            fid_list: fids.to_vec(),
+            title: title.to_string(),
+            url_type: if password.is_some() { 2 } else { 1 },
+            expired_type,
+            passcode: password.map(str::to_string),
+        };
+        let response: CreateShareResponse = self
+            .post_json(
+                format!(
+                    "{}/1/clouddrive/share?pr=ucpro&fr=pc&uc_param_str=",
+                    self.config.api_base_url
+                ),
+                &request,
+            )
+            .await?;
+        let response = self.ensure_ok(response)?;
+        let share_id = if let Some(share_id) = response.data.share_id {
+            share_id
+        } else {
+            let task_id = response.data.task_id.ok_or_else(|| {
+                QuarkPanError::invalid_argument("missing task_id in share response")
+            })?;
+            let mut share_id = None;
+            for retry_index in 0..30 {
+                let task: TaskResponse = self
+                    .get_json(format!(
+                        "{}/1/clouddrive/task?pr=ucpro&fr=pc&uc_param_str=&task_id={task_id}&retry_index={retry_index}",
+                        self.config.api_base_url
+                    ))
+                    .await?;
+                let task = self.ensure_ok(task)?;
+                let task_finished = task.data.status.as_bool().unwrap_or(false)
+                    || task.data.status.as_i64().is_some_and(|status| status != 0)
+                    || task
+                        .data
+                        .status
+                        .as_str()
+                        .is_some_and(|status| status.eq_ignore_ascii_case("success"));
+                if task_finished {
+                    share_id = task.data.share_id;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+            share_id.ok_or_else(|| {
+                QuarkPanError::invalid_argument("share task did not return share_id")
+            })?
+        };
+
+        let response: SharePasswordResponse = self
+            .post_json(
+                format!(
+                    "{}/1/clouddrive/share/password?pr=ucpro&fr=pc&uc_param_str=",
+                    self.config.api_base_url
+                ),
+                &serde_json::json!({ "share_id": share_id }),
+            )
+            .await?;
+        let response = self.ensure_ok(response)?;
+        Ok(crate::model::ShareInfo {
+            share_id,
+            share_url: response.data.share_url,
+            title: response.data.title,
+            passcode: response
+                .data
+                .passcode
+                .or_else(|| password.map(str::to_string)),
+        })
     }
 
     pub async fn list_folder(&self, pdir_fid: &str, page: u32, size: u32) -> Result<ListPage> {

@@ -35,6 +35,9 @@ struct Cli {
     quiet: bool,
     #[arg(long)]
     no_progress: bool,
+    /// Show transfer progress even when stderr is not attached to a TTY.
+    #[arg(long, conflicts_with = "no_progress")]
+    progress: bool,
     #[arg(long, value_enum)]
     color: Option<ColorMode>,
     #[command(subcommand)]
@@ -59,6 +62,7 @@ enum Commands {
     Rename(RenameArgs),
     Upload(UploadArgs),
     UploadDir(UploadDirArgs),
+    Share(ShareArgs),
 }
 
 #[derive(Args, Debug)]
@@ -206,12 +210,38 @@ struct UploadDirArgs {
     overwrite: bool,
 }
 
+#[derive(Args, Debug, Clone)]
+struct ShareArgs {
+    #[command(subcommand)]
+    command: ShareCommand,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ShareCommand {
+    /// Create a share link for one or more files or folders.
+    Create(ShareCreateArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+struct ShareCreateArgs {
+    #[arg(long, required = true, num_args = 1..)]
+    fid: Vec<String>,
+    #[arg(long)]
+    title: Option<String>,
+    #[arg(long)]
+    password: Option<String>,
+    /// 1 for permanent, 2 for an expiring link.
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=2))]
+    expired_type: u8,
+}
+
 #[derive(Clone, Copy)]
 struct OutputFlags {
     quiet: bool,
     no_progress: bool,
     color: bool,
     interactive: bool,
+    force_progress: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -253,6 +283,14 @@ struct DeleteOutput {
 struct AuthSourceOutput {
     source: String,
     path: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ShareDoneOutput {
+    share_id: String,
+    share_url: String,
+    title: Option<String>,
+    passcode: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -358,6 +396,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let flags = OutputFlags {
         quiet: cli.quiet,
         no_progress: cli.no_progress,
+        force_progress: cli.progress,
         color: resolve_color(cli.color.or(config.color).unwrap_or(ColorMode::Auto)),
         interactive: std::io::stderr().is_terminal(),
     };
@@ -386,6 +425,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Rename(args) => handle_rename(flags, &quark_pan, args).await?,
         Commands::Upload(args) => handle_upload(flags, &quark_pan, args).await?,
         Commands::UploadDir(args) => handle_upload_dir(flags, &quark_pan, args).await?,
+        Commands::Share(args) => handle_share(flags, &quark_pan, args).await?,
     }
     Ok(())
 }
@@ -762,14 +802,15 @@ async fn download_with_retry(
     retry: u32,
     retry_delay: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let control = if flags.no_progress || flags.quiet || !flags.interactive {
-        None
-    } else {
-        let control = TransferControl::new(None);
-        spawn_ctrl_c_cancel(control.clone());
-        spawn_progress_printer(control.clone(), progress_label("download", output));
-        Some(control)
-    };
+    let control =
+        if flags.no_progress || flags.quiet || (!flags.interactive && !flags.force_progress) {
+            None
+        } else {
+            let control = TransferControl::new(None);
+            spawn_ctrl_c_cancel(control.clone());
+            spawn_progress_printer(control.clone(), progress_label("download", output));
+            Some(control)
+        };
     let mut attempts = 0_u32;
     loop {
         let start_offset = if allow_continue && output.exists() {
@@ -984,6 +1025,42 @@ async fn handle_rename(
             file_name: args.file_name,
         },
     )?;
+    Ok(())
+}
+
+async fn handle_share(
+    flags: OutputFlags,
+    quark_pan: &QuarkPan,
+    args: ShareArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match args.command {
+        ShareCommand::Create(args) => {
+            let title = args.title.unwrap_or_else(|| {
+                if args.fid.len() == 1 {
+                    format!("quarkpan share {}", args.fid[0])
+                } else {
+                    "quarkpan share".to_string()
+                }
+            });
+            let info = quark_pan
+                .create_share(
+                    &args.fid,
+                    title,
+                    args.password.as_deref(),
+                    args.expired_type,
+                )
+                .await?;
+            print_output(
+                flags,
+                &ShareDoneOutput {
+                    share_id: info.share_id,
+                    share_url: info.share_url,
+                    title: info.title,
+                    passcode: info.passcode,
+                },
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -1274,7 +1351,7 @@ async fn upload_file_with_task(
         Ok(())
     };
 
-    if flags.no_progress || flags.quiet || !flags.interactive {
+    if flags.no_progress || flags.quiet || (!flags.interactive && !flags.force_progress) {
         Ok(session
             .upload_stream_resumable(stream, state, on_part_uploaded)
             .await?)
@@ -1282,10 +1359,12 @@ async fn upload_file_with_task(
         let control = TransferControl::new(Some(total_remaining));
         spawn_ctrl_c_cancel(control.clone());
         spawn_progress_printer(control.clone(), progress_label("upload", file_path));
-        let stream = ProgressStream::new(stream, control);
+        let stream = ProgressStream::new(stream, control.clone());
         let completed = session
             .upload_stream_resumable(stream, state, on_part_uploaded)
             .await?;
+        control.finish();
+        tokio::time::sleep(Duration::from_millis(50)).await;
         eprintln!();
         Ok(completed)
     }
@@ -1569,6 +1648,12 @@ fn print_output<T: Serialize>(
             println!("{}", rendered.green());
         } else {
             println!("{rendered}");
+        }
+    } else if let Ok(share) = serde_json::from_value::<ShareDoneOutput>(value.clone()) {
+        println!("share link: {}", share.share_url);
+        println!("share id: {}", share.share_id);
+        if let Some(passcode) = share.passcode {
+            println!("passcode: {passcode}");
         }
     } else if let Ok(delete) = serde_json::from_value::<DeleteOutput>(value.clone()) {
         let rendered = format!(

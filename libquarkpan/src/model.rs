@@ -20,6 +20,7 @@ pub struct Response<T, U> {
     #[allow(dead_code)]
     pub timestamp: u64,
     pub data: T,
+    #[serde(default)]
     pub metadata: U,
 }
 
@@ -66,7 +67,7 @@ pub struct DownloadInfo {
     pub md5: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct EmptyMetadata {}
 
 #[derive(Debug, Clone, Deserialize)]
@@ -122,7 +123,7 @@ pub struct UpPreResponseData {
     pub callback: Callback,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct UpPreResponseMetaData {
     pub part_size: u64,
     #[allow(dead_code)]
@@ -174,6 +175,46 @@ pub struct DeleteFilesRequest {
     pub filelist: Vec<String>,
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct CreateShareRequest {
+    pub fid_list: Vec<String>,
+    pub title: String,
+    pub url_type: u8,
+    pub expired_type: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub passcode: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateShareData {
+    pub task_id: Option<String>,
+    pub share_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TaskData {
+    #[serde(default)]
+    pub status: serde_json::Value,
+    pub share_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SharePasswordData {
+    pub share_url: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub passcode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareInfo {
+    pub share_id: String,
+    pub share_url: String,
+    pub title: Option<String>,
+    pub passcode: Option<String>,
+}
+
 #[derive(Debug, Serialize, Clone, Deserialize)]
 pub struct UpAuthAndCommitRequest {
     pub md5s: Vec<String>,
@@ -208,13 +249,16 @@ pub type AuthResponse = Response<AuthResponseData, EmptyMetadata>;
 pub type FinishResponse = Response<EmptyData, EmptyMetadata>;
 pub type ListFolderResponse = Response<ListFolderData, ListFolderMetadata>;
 pub type DeleteFilesResponse = Response<EmptyData, EmptyMetadata>;
+pub type CreateShareResponse = Response<CreateShareData, EmptyMetadata>;
+pub type TaskResponse = Response<TaskData, EmptyMetadata>;
+pub type SharePasswordResponse = Response<SharePasswordData, EmptyMetadata>;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ListFolderData {
     pub list: Vec<QuarkEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct ListFolderMetadata {
     #[serde(rename = "_total")]
     pub total: u32,
